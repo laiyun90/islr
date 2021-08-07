@@ -1,0 +1,290 @@
+---
+title: "Chapter 3: Linear Regression"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output:
+  html_document:
+    code_folding: show
+    df_print: paged
+    toc: TRUE
+    toc_float: TRUE
+    theme: paper
+    highlight: zenburn
+bibliography: ../references.bib
+csl: ../apa.csl
+nocite: |
+  @James2021
+---
+<style>
+body .main-container {
+  max-width: 1500px !important;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  fig.width = 4, fig.height = 4, dpi = 150
+)
+```
+
+```{r packages, include=FALSE}
+library(tidyverse)
+library(here)
+library(glue)
+library(patchwork)
+library(gt)
+```
+
+```{r dunnr, include=FALSE}
+library(dunnr)
+
+# This command must be run once to register all fonts installed on Windows
+# extrafont::font_import(pattern = "Roboto")
+# This command must be run once in each R session to register fonts
+extrafont::loadfonts(device = "win", quiet = TRUE)
+
+theme_set(theme_td())
+set_geom_fonts()
+set_palette()
+```
+
+# 3.1 Simple Linear Regression
+
+## 3.1.1 Estimating the Coefficients
+
+To re-create Figure 3.1, import the `Advertising` data set:
+
+```{r message=FALSE, warning=FALSE}
+advertising <- read_csv(here("data", "Advertising.csv"))
+glimpse(advertising)
+```
+
+Fit the simple linear model and draw the residuals to the line of best fit:
+
+```{r}
+lm_sales_tv <- lm(sales ~ TV, data = advertising)
+advertising %>%
+  bind_cols(
+    pred_sales = predict(lm_sales_tv, data = advertising)
+  ) %>%
+  ggplot(aes(x = TV)) +
+  geom_point(aes(y = sales), color = "red") +
+  geom_smooth(aes(y = sales), method = "lm", formula = "y ~ x", se = FALSE) +
+  geom_linerange(aes(ymin = sales, ymax = pred_sales))
+```
+```{r}
+summary(lm_sales_tv)
+```
+
+We recover the same regression coefficients: $\beta_0$ = 7.03 and $\beta_1$ = 0.0475.
+
+## 3.1.2 Assessing the Accuracy of the Coefficient Estimates
+
+The quickest way to get the 95% confidence intervals for the coefficients is with `stats::confint()`:
+
+```{r}
+confint(lm_sales_tv)
+```
+
+Computing them manually requires the standard errors of the coefficients.
+For this, I prefer `broom::tidy`:
+
+```{r}
+library(broom)
+tidy(lm_sales_tv)
+```
+
+Then double the SEs to approximate the intervals:
+
+```{r}
+tidy(lm_sales_tv) %>%
+  transmute(
+    term, estimate,
+    ci_lower = estimate - 2*std.error, ci_upper = estimate + 2*std.error
+  )
+```
+
+The $t$-statistics are returned by `broom::tidy` as the `statistic` variable.
+We can manually compute them with the estimates and SEs, and compute the $p$-value based on a $t$-distribution:
+
+```{r}
+tidy(lm_sales_tv) %>%
+  transmute(
+    term, estimate, se = std.error,
+    t = estimate / se,
+    p_value = 2 * pt(-t, df = nrow(advertising) - 2)
+  )
+```
+
+## 3.1.3 Assessing the Accuracy of the Model
+
+The `broom::glance` function gives summary statistics of a model:
+
+```{r}
+glance(lm_sales_tv)
+```
+
+The residual standard error (RSE) is `sigma`, variance explained $R^2$ is `r.squared`, and the $F$-statistic is `statistic`.
+With this, we can re-create Table 3.2:
+
+```{r}
+glance(lm_sales_tv) %>%
+  transmute(`Residual standard error` = round(sigma, 2),
+            `R2` = round(r.squared, 3), `F-statistic` = round(statistic, 1)) %>%
+  mutate(across(everything(), as.character)) %>%
+  pivot_longer(everything(), names_to = "Quantity", values_to = "Value") %>%
+  gt()
+```
+
+
+# 3.2 Multiple Linear Regression
+
+Before performing the multiple linear regression, fit the other two simple linear regression models on radio and newspaper budgets:
+
+```{r}
+lm_sales_radio <- lm(sales ~ radio, data = advertising)
+lm_sales_newspaper <- lm(sales ~ newspaper, data = advertising)
+```
+
+The `gtsummary` package provides functions to quickly create regression summary tables, similar to Table 3.4:
+
+```{r}
+library(gtsummary)
+tbl_regression(lm_sales_radio, intercept = TRUE)
+tbl_regression(lm_sales_newspaper, intercept = TRUE)
+```
+
+Now fit the multiple regression model:
+
+```{r}
+lm_sales_mult <- lm(sales ~ TV + radio + newspaper, data = advertising)
+tbl_regression(lm_sales_mult, intercept = TRUE)
+```
+
+The lack of association between sales and newspaper advertising can be explained by co-linearity with the other predictors, as shown in Table 3.5:
+
+```{r}
+advertising %>%
+  pivot_longer(cols = -X1) %>%
+  full_join(., ., by = "X1") %>%
+  group_by(name.x, name.y) %>%
+  summarise(
+    corr_coef = cor(value.x, value.y) %>%
+      round(4) %>%
+      as.character(),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(names_from = name.y, values_from = corr_coef) %>%
+  gt(rowname_col = "name.x")
+```
+
+Consider the hypothesis test:
+
+$$
+\begin{align}
+H_0:& \beta_1 = \beta_2 = \dots = \beta_p = 0 \\
+H_a:& \text{at least one of } \beta_j \text{ is non-zero.}
+\end{align}
+$$
+This is performed by computing the $F$-statistic as in equation (3.23).
+Instead of computing manually, we again use `broom::glance` to re-create Table 3.6:
+
+```{r}
+glance(lm_sales_mult) %>%
+  transmute(`Residual standard error` = round(sigma, 2),
+            `R2` = round(r.squared, 3), `F-statistic` = round(statistic, 1)) %>%
+  mutate(across(everything(), as.character)) %>%
+  pivot_longer(everything(), names_to = "Quantity", values_to = "Value") %>%
+  gt()
+  
+```
+
+The value of 570 is far larger than 1, which is compelling evidence against the null $H_0$.
+The $F$-statistic follows the $F$-distribution, so we can get a $p$-value using the values of $n$ and $p$.
+Or automatically with `glance`:
+
+```{r}
+glance(lm_sales_mult) %>%
+  select(statistic, p.value)
+```
+
+Another way to do this is to explicitly fit the null model (no predictors), and perform an analysis of variance with the two models using `anova`:
+
+```{r}
+lm_sales_null <- lm(sales ~ 1, data = advertising)
+anova(lm_sales_null, lm_sales_mult)
+```
+
+This also makes it easy to compare models with different subsets of variables, as in equation (3.24).
+For example, the model with and without `newspaper`:
+
+```{r}
+anova(
+  lm(sales ~ TV + radio, data = advertising),
+  lm_sales_mult
+)
+```
+
+# 3.3 Other Considerations in the Regression Model
+
+## 3.3.1 Qualitative Predictors
+
+```{r}
+credit <- ISLR2::Credit
+credit %>%
+  select(where(is.numeric)) %>%
+  rownames_to_column("row") %>%
+  pivot_longer(cols = -row) %>%
+  full_join(., ., by = "row") %>%
+  filter(name.x != name.y) %>%
+  ggplot(aes(x = value.x, y = value.y)) +
+  geom_point() +
+  facet_grid(name.x ~ name.y, scales = "free") +
+  add_facet_borders()
+  summarise(
+    n = n(),
+    .groups = "drop"
+  )
+  
+```
+
+Load the `credit` data set and regress credit card balance on home ownership (two levels):
+
+```{r}
+lm_balance_own <- lm(Balance ~ Own, data = credit)
+tbl_regression(lm_balance_own, intercept = TRUE,
+               show_single_row = "Own")
+```
+
+And with region (three levels):
+
+```{r}
+lm_balance_region <- lm(Balance ~ Region, data = credit)
+tbl_regression(lm_balance_region, intercept = TRUE)
+```
+
+
+
+# Reproducibility
+
+<details><summary>Reproducibility receipt</summary>
+
+```{r}
+Sys.time()
+```
+
+```{r}
+if ("git2r" %in% installed.packages()) {
+  if (git2r::in_repository()) {
+    git2r::repository()
+  }
+}
+```
+
+```{r}
+sessioninfo::session_info()
+```
+
+</details>
+
+# References
