@@ -2,28 +2,17 @@
 title: "Chapter 3: Linear Regression"
 date: "`r format(Sys.time(), '%Y-%m-%d')`"
 output:
-  html_document:
-    code_folding: show
-    df_print: paged
-    toc: TRUE
-    toc_float: TRUE
-    theme: paper
-    highlight: zenburn
-bibliography: ../references.bib
-csl: ../apa.csl
+  github_document
+bibliography: references.bib
+csl: apa.csl
 nocite: |
   @James2021
 ---
-<style>
-body .main-container {
-  max-width: 1500px !important;
-}
-</style>
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
-  echo = TRUE,
-  fig.width = 4, fig.height = 4, dpi = 150
+  #fig.width = 4, fig.height = 4,
+  dpi = 150
 )
 ```
 
@@ -196,7 +185,6 @@ glance(lm_sales_mult) %>%
   mutate(across(everything(), as.character)) %>%
   pivot_longer(everything(), names_to = "Quantity", values_to = "Value") %>%
   gt()
-  
 ```
 
 The value of 570 is far larger than 1, which is compelling evidence against the null $H_0$.
@@ -229,28 +217,10 @@ anova(
 
 ## 3.3.1 Qualitative Predictors
 
-```{r}
-credit <- ISLR2::Credit
-credit %>%
-  select(where(is.numeric)) %>%
-  rownames_to_column("row") %>%
-  pivot_longer(cols = -row) %>%
-  full_join(., ., by = "row") %>%
-  filter(name.x != name.y) %>%
-  ggplot(aes(x = value.x, y = value.y)) +
-  geom_point() +
-  facet_grid(name.x ~ name.y, scales = "free") +
-  add_facet_borders()
-  summarise(
-    n = n(),
-    .groups = "drop"
-  )
-  
-```
-
 Load the `credit` data set and regress credit card balance on home ownership (two levels):
 
 ```{r}
+credit <- ISLR2::Credit
 lm_balance_own <- lm(Balance ~ Own, data = credit)
 tbl_regression(lm_balance_own, intercept = TRUE,
                show_single_row = "Own")
@@ -261,6 +231,239 @@ And with region (three levels):
 ```{r}
 lm_balance_region <- lm(Balance ~ Region, data = credit)
 tbl_regression(lm_balance_region, intercept = TRUE)
+```
+
+Note that the model `summary()` returns the results of the $F$-test below:
+
+```{r}
+summary(lm_balance_region)
+```
+
+Which is the same as that returned by `anova()`:
+
+```{r}
+anova(lm_balance_region)
+```
+
+## 3.3.2 Extensions of the Linear Model
+
+The effect on sales, with an interaction term between TV and radio:
+
+```{r}
+lm_sales_inter <- lm(sales ~ radio * TV, data = advertising)
+tbl_regression(lm_sales_inter, intercept = TRUE)
+```
+
+Compare the model with and without the interaction term:
+
+```{r}
+lm_sales_radio_tv <- lm(sales ~ radio + TV, data = advertising)
+
+glance(lm_sales_radio_tv) %>%
+  mutate(model = "additive") %>%
+  bind_rows(
+    glance(lm_sales_inter) %>%
+      mutate(model = "interaction")
+  ) %>%
+  select(model, r.squared, AIC, BIC)
+```
+
+Re-crate Figure 3.7, comparing the balance model with and without an interaction term:
+
+```{r fig.width=6, fig.height=3}
+lm_balance_income_student <-
+  lm(Balance ~ Income + Student, data = credit)
+lm_balance_income_student_inter <-
+  lm(Balance ~ Income * Student, data = credit)
+
+d <- tibble(Income = seq(0, 150, 0.1)) %>%
+  crossing(Student = factor(c("No", "Yes")))
+augment(lm_balance_income_student, newdata = d) %>%
+  mutate(model = "additive") %>%
+  bind_rows(
+    augment(lm_balance_income_student_inter, newdata = d) %>%
+      mutate(model = "interaction")
+  ) %>%
+  ggplot(aes(x = Income, y = .fitted, color = Student)) +
+  geom_line() +
+  facet_wrap(~model, nrow = 1) +
+  labs(y = "Balance") +
+  theme_td_grid()
+```
+
+Fit mpg to horsepower with a linear term, quadratic term, and up to the fifth degree:
+
+```{r}
+auto <- ISLR2::Auto
+
+lm_mpg_hp <- lm(mpg ~ horsepower, data = auto)
+lm_mpg_hp2 <- lm(mpg ~ horsepower + I(horsepower^2), data = auto)
+lm_mpg_hp5 <-
+  lm(
+    mpg ~ horsepower + I(horsepower^2) + I(horsepower^3) +
+      I(horsepower^4) + I(horsepower^5),
+    data = auto
+  )
+
+d <- tibble(horsepower = seq(1, 250, 0.1))
+
+augment(lm_mpg_hp, newdata = d) %>% mutate(model = "Linear") %>%
+  bind_rows(
+    augment(lm_mpg_hp2, newdata = d) %>% mutate(model = "Degree 2")
+  ) %>%
+  bind_rows(
+    augment(lm_mpg_hp5, newdata = d) %>% mutate(model = "Degree 5")
+  ) %>%
+  ggplot(aes(x = horsepower, y = .fitted, color = model)) +
+  geom_point(
+    aes(y = mpg), data = auto, color = "lightgrey", shape = 21, size = 4
+  ) +
+  geom_line(size = 1.5) +
+  coord_cartesian(xlim = c(40, 230), ylim = c(8, 52)) +
+  add_facet_borders() +
+  theme(legend.position = c(0.7, 0.8)) +
+  labs(y = "mpg", color = NULL)
+```
+
+```{r}
+glance(lm_mpg_hp) %>% mutate(model = "Linear") %>%
+  bind_rows(
+    glance(lm_mpg_hp2) %>% mutate(model = "Degree 2")
+  ) %>%
+  bind_rows(
+    glance(lm_mpg_hp5) %>% mutate(model = "Degree 5")
+  ) %>%
+  select(model, r.squared, AIC, BIC) %>%
+  gt()
+```
+
+## 3.3 Potential Problems
+
+1. Non-linearity of the Data
+
+```{r}
+plot(lm_mpg_hp, 1)
+plot(lm_mpg_hp2, 1)
+```
+
+2. Correlation of Error Terms
+
+3. Non-constant Variance of Error Terms
+
+```{r}
+plot(lm_mpg_hp)
+```
+
+4. Outliers
+
+5. High Leverage Points
+
+6. Collinearity
+
+```{r fig.width=5, fig.height=3}
+credit %>%
+  select(Limit, Age, Rating) %>%
+  pivot_longer(cols = c(Age, Rating)) %>%
+  ggplot(aes(x = Limit, y = value)) +
+  geom_point() +
+  facet_wrap(~name, nrow = 1, scales = "free_y")
+```
+
+```{r}
+lm_balance_age_limit <- lm(Balance ~ Age + Limit, data = credit)
+lm_balance_rating_limit <- lm(Balance ~ Rating + Limit, data = credit)
+
+tbl_regression(lm_balance_age_limit)
+tbl_regression(lm_balance_rating_limit)
+```
+
+To calculate variance inflation factors (VIF), there are R functions such as `car::vif` which can be used, but it is fairly simple to calculate by hand:
+
+```{r}
+lm_rating_age_limit <- lm(Rating ~ Age + Limit, data = credit)
+lm_age_rating_limit <- lm(Age ~ Rating + Limit, data = credit)
+lm_limit_age_rating <- lm(Limit ~ Age + Rating, data = credit)
+tribble(
+  ~Predictor, ~`R^2`,
+  "Age", 1 / (1 - summary(lm_age_rating_limit)$r.squared),
+  "Rating", 1 / (1 - summary(lm_rating_age_limit)$r.squared),
+  "Limit", 1 / (1 - summary(lm_limit_age_rating)$r.squared)
+) %>%
+  gt()
+
+hatvalues(lm_rating_age_limit)
+```
+
+
+# 3.4 The Marketing Plan
+
+# 3.5 Comparison of Linear Regression with $K$-Nearest Neighbors
+
+# 3.6 Lab: Linear Regression
+
+## 3.6.1 Libraries
+
+```{r}
+boston <- ISLR2::Boston
+```
+
+## 3.6.2 Simple Linear Regression
+
+Regression median value of owner-occupied homes `medv` on lower status of the population `lstat`:
+
+```{r}
+lm_medv_lstat <- lm(medv ~ lstat, data = boston)
+confint(lm_medv_lstat)
+
+nd <- tibble(lstat = c(5, 10, 15))
+
+predict(lm_medv_lstat, nd, interval = "confidence")
+predict(lm_medv_lstat, nd, interval = "prediction")
+
+boston %>%
+  ggplot(aes(x = lstat, y = medv)) +
+  geom_point() +
+  geom_smooth(method = "lm" , formula = "y ~ x")
+```
+
+To display model diagnostics, we can call `plot()` on the model object as we have before.
+I like the `performance` package because it uses `ggplot2`:
+
+```{r warning=FALSE, fig.width=9, fig.height=9}
+performance::check_model(lm_medv_lstat)
+```
+
+## 3.6.3 Multiple Linear Regression
+
+Fit to all predictors and check VIF:
+
+```{r}
+lm_medv_all <- lm(medv ~ ., data = boston)
+performance::check_collinearity(lm_medv_all)
+```
+
+The `rad` (accessibility to radial highways) and `tax` (property tax rate) variables have moderate VIF.
+
+## 3.6.4 Interaction Terms
+
+## 3.6.5 Non-linear Transformations of the Predictors
+
+Perform a regression of `medv` onto `lstat` and `lstat^2`, and compare with `anova`:
+
+```{r}
+lm_medv_lstat2 <- lm(medv ~ lstat + I(lstat^2), data = boston)
+tbl_regression(lm_medv_lstat2)
+
+anova(lm_medv_lstat, lm_medv_lstat2)
+```
+## 3.6.6 Qualitative Predictors
+
+```{r}
+carseats <- ISLR2::Carseats
+lm_sales <- lm(Sales ~ . + Income:Advertising + Price:Age,
+               data = carseats)
+
+contrasts(carseats$ShelveLoc)
 ```
 
 
