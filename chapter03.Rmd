@@ -390,8 +390,6 @@ tribble(
   "Limit", 1 / (1 - summary(lm_limit_age_rating)$r.squared)
 ) %>%
   gt()
-
-hatvalues(lm_rating_age_limit)
 ```
 
 
@@ -456,6 +454,7 @@ tbl_regression(lm_medv_lstat2)
 
 anova(lm_medv_lstat, lm_medv_lstat2)
 ```
+
 ## 3.6.6 Qualitative Predictors
 
 ```{r}
@@ -466,6 +465,149 @@ lm_sales <- lm(Sales ~ . + Income:Advertising + Price:Age,
 contrasts(carseats$ShelveLoc)
 ```
 
+# 3.7 Exercises
+
+I'll attempt to do these exercises in the `tidymodels` framework.
+
+## 8. Simple linear regression with `Auto`
+
+* Fit the model and display the summary
+
+This is way overkill for a simple linear regression, but here is a `tidymodels` workflow object for regressing `mpg` on `horsepower`:
+
+```{r}
+lm_mpg_hp_recipe <- recipe(mpg ~ horsepower, data = auto)
+lm_mpg_hp_spec <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+lm_mpg_hp_workflow <- workflow() %>%
+  add_recipe(lm_mpg_hp_recipe) %>%
+  add_model(lm_mpg_hp_spec)
+lm_mpg_hp_workflow
+```
+
+Fit the model and print the estimates:
+
+```{r}
+lm_mpg_hp_fit <- lm_mpg_hp_workflow %>%
+  fit(data = auto)
+tidy(lm_mpg_hp_fit)
+```
+
+
+
+```{r}
+summary(lm_mpg_hp_fit$fit)
+```
+
+
+
+    * There is a relationship between `mpg` and `horsepower`.
+    * Is is highly significant: $p$ <2e-16.
+    * The relationship is negative. Every unit of horsepower is associated with a -0.158 reduction in miles per gallon.
+    * The confidence and prediction intervals of predicted `mpg` given `horsepower` = 98:
+
+```{r}
+predict(lm_mpg_hp_fit, tibble(horsepower = 98), type = "conf_int")
+predict(lm_mpg_hp_fit, tibble(horsepower = 98), type = "pred_int")
+```
+
+Note that the arguments to `predict()` have to be altered when using a `tidymodels` fit.
+It also doesn't return the point estimate.
+
+* Plot with best fit line:
+
+```{r warning=FALSE}
+auto %>%
+  ggplot(aes(x = horsepower)) +
+  geom_point(aes(y = mpg)) +
+  geom_line(
+    data = augment(lm_mpg_hp_fit, tibble(horsepower = 50:220)),
+    aes(y = .pred), size = 2, color = td_colors$nice$emerald
+  )
+```
+
+* Diagnostic plots:
+
+Do use the convenient `plot()` or `performance::check_model()` plotting functions, we need to extract the actual `lm` object from the `tidymodels` fit:
+
+```{r fig.height=7, fig.width=6, warning=FALSE}
+lm_mpg_hp_fit %>%
+  extract_fit_engine() %>%
+  performance::check_model()
+```
+
+Two potential problems: non-linearity (top left plot) and homogeneity of variance (top right).
+
+## 9. Multiple linear regression with `Auto`
+
+* Scatterplot of all variables.
+
+There are some advanced ways to produce these bivariate correlation plots in `gglpot2`:
+
+```{r fig.height=8, fig.width=8}
+auto %>%
+  select(-name) %>%
+  rowid_to_column() %>%
+  pivot_longer(cols = -rowid) %>%
+  mutate(name = factor(name)) %>%
+  full_join(., ., by = "rowid") %>%
+  filter(as.integer(name.x) > as.integer(name.y)) %>%
+  ggplot(aes(x = value.x, y = value.y)) +
+  geom_point() +
+  facet_wrap(name.x ~ name.y, scales = "free") +
+  add_facet_borders()
+```
+
+But they take a lot of effort to look nice.
+The `GGally::ggpairs()` function quickly makes a scatterplot matrix from a given data set, and also gives the correlation coefficients:
+
+```{r fig.height=7, fig.width=7}
+GGally::ggpairs(auto %>% select(-name))
+```
+
+* Compute the correlations.
+
+```{r}
+cor(auto %>% select(-name))
+```
+
+* Fit the multiple linear regression.
+
+```{r}
+lm_mpg_recipe <- recipe(mpg ~ ., data = auto) %>%
+  step_rm(name)
+
+# Skip the spec step, and just put it directly into the workflow
+lm_mpg_workflow <- workflow() %>%
+  add_recipe(lm_mpg_recipe) %>%
+  # By default, linear_reg() will use lm as the engine and regression as mode
+  add_model(linear_reg())
+lm_mpg_workflow
+
+lm_mpg_fit <- lm_mpg_workflow %>%
+  fit(data = auto)
+tidy(lm_mpg_fit)
+```
+
+
+* There is a relationship between the predictors and `mpg`: $F$ = `r summary(lm_mpg)$fstatistic[1] %>% round(2)`
+* The following terms are statistically significant: `r tidy(lm_mpg) %>% filter(p.value < 0.05) %>% pull(term) %>% str_c(collapse = ", ")`
+* The coefficient for `year` suggests that, for every increment in car model year, `mpg` increases by `r tidy(lm_mpg) %>% filter(term == "year") %>% pull(estimate) %>% round(2)`
+        
+```{r fig.height=7, fig.width=7, warning=FALSE}
+performance::check_model(lm_mpg)
+```
+
+Some non-linearity and collinearity.
+There is a point with high leverage, but it has a low residual.
+
+## 10. Multiple linear regression with `Carseats`
+
+```{r}
+lm_sales_price_urban_us <- lm(Sales ~ Price + Urban + US, data = carseats)
+summary(lm_sales_price_urban_us)
+```
 
 
 # Reproducibility
